@@ -37,7 +37,7 @@
         <section id="multi-actions" class="is-flex is-justify-between">
           <div>
             <b-field v-if="can('upload') && ! checked.length" class="file is-inline-block">
-              <b-upload multiple native @input="files = $event">
+              <b-upload multiple native @input="handleFileInput" accept="application/pdf">
                 <a v-if="! checked.length" class="is-inline-block">
                   <b-icon icon="upload" size="is-small" /> {{ lang('Add files') }}
                 </a>
@@ -72,6 +72,9 @@
             </a>
             <a v-if="can('write') && checked.length" class="is-inline-block" @click="remove">
               <b-icon icon="trash-alt" size="is-small" /> {{ lang('Delete') }}
+            </a>
+            <a v-if="can('write') && checked.length" class="is-inline-block" @click="brief_me">
+              <b-icon icon="file-medical" size="is-small" /> {{ lang('Brief me') }}
             </a>
           </div>
           <div id="pagination" v-if="can('read')">
@@ -141,14 +144,14 @@
                 <b-dropdown-item v-if="can(['write', 'zip']) && ! isArchive(props.row)" aria-role="listitem" @click="zip($event, props.row)">
                   <b-icon icon="file-archive" size="is-small" /> {{ lang('Zip') }}
                 </b-dropdown-item>
-                <b-dropdown-item v-if="can(['write', 'chmod']) && props.row.permissions !== -1" aria-role="listitem" @click="chmod($event, props.row)">
-                  <b-icon icon="lock" size="is-small" /> {{ lang('Permissions') }} ({{ props.row.permissions }})
-                </b-dropdown-item>
                 <b-dropdown-item v-if="can('write')" aria-role="listitem" @click="remove($event, props.row)">
                   <b-icon icon="trash-alt" size="is-small" /> {{ lang('Delete') }}
                 </b-dropdown-item>
                 <b-dropdown-item v-if="props.row.type == 'file' && can('download')" v-clipboard:copy="getDownloadLink(props.row.path)" aria-role="listitem">
                   <b-icon icon="clipboard" size="is-small" /> {{ lang('Copy link') }}
+                </b-dropdown-item>
+                <b-dropdown-item v-if="can('upload')" aria-role="listitem" @click="brief_me($event, props.row)">
+                  <b-icon icon="file-medical" size="is-small" /> {{ lang('Brief me') }}
                 </b-dropdown-item>
               </b-dropdown>
             </b-table-column>
@@ -158,8 +161,8 @@
         <section id="bottom-info" class="is-flex is-justify-between">
           <div>
             <span>{{ lang('Selected', checked.length, totalCount) }}</span>
-          </div>
-          <div v-if="(showAllEntries || hasFilteredEntries) ">
+            </div>
+            <div v-if="isAdmin">
             <input type="checkbox" id="checkbox" @click="toggleHidden">
             <label for="checkbox"> {{ lang('Show hidden') }}</label>
           </div>
@@ -217,8 +220,11 @@ export default {
 
       return _.filter(breadcrumbs, o => o.name)
     },
+    isAdmin() {
+      return this.$store.state.user.role === 'admin'
+    },
     content() {
-      return this.$store.state.cwd.content
+      return this.filterEntries(this.$store.state.cwd.content)
     },
     totalCount() {
       return Number(_.sumBy(this.$store.state.cwd.content, (o) => {
@@ -253,7 +259,58 @@ export default {
     }
   },
   methods: {
+    brief_me(event, file) {
+      const destination = '/_brief_me' // Target folder for the operation
+      const items = file ? [file] : this.getSelected() // Use the single file if provided, otherwise get selected files
+
+      if (!items.length) {
+        this.$notification.open({
+          message: this.lang('No files selected.'),
+          type: 'is-warning',
+          queue: false,
+        })
+        return
+      }
+
+      this.isLoading = true
+      api.moveItems({
+        destination: destination,
+        items: items,
+      })
+        .then(() => {
+          this.isLoading = false
+          this.loadFiles() // Reload the file list to reflect changes
+          this.checked = [] // Clear the selected files
+        })
+        .catch(error => {
+          this.isLoading = false
+          this.handleError(error) // Handle any errors
+        })
+    },
+    handleFileInput(files) {
+      const validFiles = Array.from(files).filter(file => {
+        const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+        if (!isPDF) {
+        this.$notification.open({
+          message: this.lang('Only PDF files are allowed: ') + file.name,
+          type: 'is-danger',
+          queue: false,
+          indefinite: true,
+        })
+        }
+      return isPDF // Only include valid PDF files
+      })
+
+    // Apply the filterEntries method to the added files
+    this.files = this.filterEntries(validFiles)
+    this.loadFiles()
+
+    },
     toggleHidden() {
+      // if user is not admin, do not toggle
+      if (!this.isAdmin) {
+        return
+      }
       this.showAllEntries = !this.showAllEntries
       this.loadFiles()
       this.checked = []
@@ -282,7 +339,7 @@ export default {
     filterEntries(files){
       var filter_entries = this.$store.state.config.filter_entries
       this.hasFilteredEntries = false
-      if (!this.showAllEntries && typeof filter_entries !== 'undefined' && filter_entries.length > 0){
+      if (!this.showAllEntries){
         let filteredFiles = []
         _.forEach(files, (file) => {
           let filterContinue = false
@@ -308,7 +365,7 @@ export default {
             filteredFiles.push(file)
           }
         })
-        return filteredFiles
+        return files.filter(file => !file.name.startsWith('_') && !file.name.startsWith('.'))
       }
       return files
     },
@@ -321,6 +378,7 @@ export default {
             content: this.filterEntries(ret.files),
             location: ret.location,
           })
+          
         })
         .catch(error => this.handleError(error))
     },

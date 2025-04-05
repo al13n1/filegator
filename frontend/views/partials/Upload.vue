@@ -113,6 +113,18 @@ export default {
     this.resumable.assignDrop(document.getElementById('dropzone'))
 
     this.resumable.on('fileAdded', (file) => {
+        // Validate if the file is a PDF
+      if (file.file.type !== 'application/pdf' && !file.fileName.toLowerCase().endsWith('.pdf')) {
+        this.$notification.open({
+          message: this.lang('Only PDF files are allowed.'),
+          type: 'is-danger',
+          queue: false,
+          indefinite: true,
+        })
+        this.resumable.removeFile(file) // Remove the invalid file
+        return // Stop further processing
+      }
+
       this.visible = true
       this.progressVisible = true
 
